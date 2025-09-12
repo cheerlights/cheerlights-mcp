@@ -272,6 +272,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🎄 About CheerLights
 
-CheerLights is a global Internet of Things project that synchronizes colored lights all around the world to create a synchronized light display. The project was created by Hans Scharler and has connected thousands of lights across the globe since 2011. When someone tweets a color to @CheerLights, all participating lights change to that color in near real-time.
+CheerLights is a global Internet of Things project that synchronizes colored lights all around the world to create a synchronized light display. The project was created by Hans Scharler and has connected thousands of lights across the globe since 2011. When someone changes the color on the [CheerLights Discord Server](https://cheerlights/discord), all participating lights change to that color in near real-time.
 
 This MCP server provides AI assistants with rich access to CheerLights data, enabling analysis of global lighting trends, color popularity, and temporal patterns in this unique IoT dataset.
