@@ -1,338 +1,211 @@
-"""Main CheerLights MCP Server implementation."""
+"""The CheerLights MCP server: tools, resources, and prompts over the live CheerLights color."""
 
+import argparse
+import json
 import logging
-from typing import Dict, List, Optional
+from collections import Counter
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
+from typing import Annotated, Literal
 
-from mcp.server.fastmcp import FastMCP
+import httpx
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
+from mcp.types import ToolAnnotations
+from pydantic import Field
 
-from .api import ThingSpeakClient
-from .models import ColorData, ColorHistory, ColorStatistics, ColorSearchResult, HexColor
+from .colors import PALETTE, normalize, palette, palette_color
+from .models import ColorChange, ColorHistory, ColorSearchResult, ColorStatistics, PaletteColor
+from .thingspeak import MAX_RESULTS, ThingSpeakClient, ThingSpeakError
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("cheerlights_mcp")
+
+try:
+    __version__ = version("cheerlights-mcp")
+except PackageNotFoundError:  # running from a source checkout without installing
+    __version__ = "0.0.0"
+
+INSTRUCTIONS = """\
+CheerLights is a global network of lights that all show the same color. Anyone sets the color \
+on the CheerLights Discord with the /cheerlights command; these tools read it. They cannot set it.
+
+The color is always one of eleven names: red, green, blue, cyan, white, oldlace, purple, magenta, \
+yellow, orange, pink. History, statistics, and search cover the CheerLights ThingSpeak channel \
+1417 and list changes newest first. Times are UTC."""
+
+# Every tool only reads the public CheerLights feed on ThingSpeak.
+READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=True)
 
 
-def create_server(name: str = "CheerLights") -> FastMCP:
-    """Create and configure the CheerLights MCP server.
-    
-    Args:
-        name: Name for the MCP server
-        
-    Returns:
-        Configured FastMCP server instance
+def create_server(transport: httpx.AsyncBaseTransport | None = None) -> MCPServer:
+    """Build the CheerLights MCP server.
+
+    `transport` replaces the HTTP transport to ThingSpeak, for tests.
     """
-    mcp = FastMCP(
-        name=name,
-        instructions="""
-        CheerLights MCP Server - Connect to the global CheerLights network!
-        
-        CheerLights is a global IoT project that synchronizes colors across connected
-        lights worldwide. This server provides access to the current color and
-        historical data from the CheerLights API.
-        
-        Available capabilities:
-        - Get the current CheerLights color
-        - View color change history 
-        - Analyze color usage statistics
-        - Search for specific colors in history
-        - Get hex color codes and RGB values
-        - Access color history as a resource
-        
-        Use the tools to interact with live CheerLights data or browse the color
-        history resource for context about recent changes.
-        """.strip()
+    feed: dict[str, ThingSpeakClient] = {}
+
+    @asynccontextmanager
+    async def lifespan(_: MCPServer) -> AsyncIterator[None]:
+        async with ThingSpeakClient(transport=transport) as client:
+            feed["client"] = client
+            yield
+            feed.clear()
+
+    mcp = MCPServer(
+        name="cheerlights",
+        title="CheerLights",
+        version=__version__,
+        website_url="https://cheerlights.com",
+        instructions=INSTRUCTIONS,
+        lifespan=lifespan,
     )
-    
-    # Register tools with structured output
-    @mcp.tool()
-    async def get_current_cheerlights_color() -> ColorData:
-        """Get the most recent CheerLights color from the global network."""
-        async with ThingSpeakClient() as client:
-            try:
-                current_color = await client.get_current_color()
-                if not current_color:
-                    logger.warning("No current color data available")
-                    return ColorData(
-                        color="unknown",
-                        timestamp="unknown", 
-                        entry_id="unknown"
-                    )
-                
-                logger.info(f"Current color: {current_color.color}")
-                return current_color
-                
-            except Exception as e:
-                logger.error(f"Error fetching current color: {e}")
-                raise
-    
-    @mcp.tool()
-    async def get_cheerlights_history(count: int = 5) -> ColorHistory:
-        """Get a history of recent CheerLights color changes.
-        
-        Args:
-            count: Number of recent colors to retrieve (1-100, default: 5)
-        """
-        # Enforce reasonable limits
-        if count < 1:
-            count = 1
-        if count > 100:
-            count = 100
-            
-        logger.debug(f"Fetching {count} colors from CheerLights history")
-        
-        async with ThingSpeakClient() as client:
-            try:
-                colors = await client.get_color_history(count=count)
-                
-                if not colors:
-                    logger.warning("No color history data available")
-                    return ColorHistory(colors=[], count=0)
-                
-                logger.info(f"Retrieved {len(colors)} color entries")
-                
-                return ColorHistory(
-                    colors=colors,
-                    count=len(colors),
-                    total_available=None  # ThingSpeak doesn't provide total count
-                )
-                
-            except Exception as e:
-                logger.error(f"Error fetching color history: {e}")
-                raise
-    
-    @mcp.tool()
-    async def analyze_color_statistics(sample_size: int = 50) -> ColorStatistics:
-        """Analyze CheerLights color usage statistics.
-        
-        Args:
-            sample_size: Number of recent entries to analyze (10-500, default: 50)
-        """
-        from .utils.statistics import calculate_color_statistics
-        
-        # Enforce reasonable limits
-        if sample_size < 10:
-            sample_size = 10
-        if sample_size > 500:
-            sample_size = 500
-        
-        logger.debug(f"Analyzing {sample_size} recent colors for statistics")
-        
-        async with ThingSpeakClient() as client:
-            try:
-                colors = await client.get_color_history(count=sample_size)
-                
-                if not colors:
-                    logger.warning("No color data available for statistics")
-                    return ColorStatistics(
-                        color_counts={},
-                        most_popular="unknown",
-                        least_popular="unknown", 
-                        total_changes=0,
-                        unique_colors=0,
-                        analysis_period="No data"
-                    )
-                
-                stats = calculate_color_statistics(colors)
-                logger.info(f"Calculated statistics for {len(colors)} colors")
-                
-                return stats
-                
-            except Exception as e:
-                logger.error(f"Error calculating color statistics: {e}")
-                raise
-    
-    @mcp.tool()
-    async def search_colors(color: str, limit: int = 20) -> ColorSearchResult:
-        """Search for specific colors in CheerLights history.
-        
-        Args:
-            color: Color name to search for (case-insensitive)
-            limit: Maximum results to return (1-100, default: 20)
-        """
-        if limit < 1:
-            limit = 1
-        if limit > 100:
-            limit = 100
-        
-        color_query = color.lower().strip()
-        logger.debug(f"Searching for color '{color_query}' with limit {limit}")
-        
-        # To find matches, we need to get a larger sample and filter
-        search_sample_size = min(limit * 10, 1000)  # Get more data to search through
-        
-        async with ThingSpeakClient() as client:
-            try:
-                all_colors = await client.get_color_history(count=search_sample_size)
-                
-                if not all_colors:
-                    logger.warning("No color data available for search")
-                    return ColorSearchResult(
-                        query=color,
-                        matches=[],
-                        match_count=0
-                    )
-                
-                # Filter colors that match the search query
-                matches = []
-                for color_data in all_colors:
-                    if color_query in color_data.color.lower():
-                        matches.append(color_data)
-                        if len(matches) >= limit:
-                            break
-                
-                logger.info(f"Found {len(matches)} matches for '{color}'")
-                
-                return ColorSearchResult(
-                    query=color,
-                    matches=matches,
-                    match_count=len(matches)
-                )
-                
-            except Exception as e:
-                logger.error(f"Error searching color history: {e}")
-                raise
-    
-    @mcp.tool()
-    async def get_hex_color_code(color_name: str) -> Optional[HexColor]:
-        """Get hex color code and RGB values for a CheerLights color.
-        
-        Args:
-            color_name: Name of the CheerLights color
-        """
-        from .utils.color_mapping import get_hex_color
-        
-        logger.debug(f"Looking up hex code for color '{color_name}'")
-        
+
+    async def recent(count: int) -> list[ColorChange]:
         try:
-            hex_color = get_hex_color(color_name)
-            
-            if hex_color:
-                logger.info(f"Found hex code for '{color_name}': {hex_color.hex_code}")
-            else:
-                logger.warning(f"No hex code found for color '{color_name}'")
-            
-            return hex_color
-            
-        except Exception as e:
-            logger.error(f"Error getting hex color: {e}")
-            raise
-    
-    # Register resources
-    @mcp.resource("cheerlights://current")
-    async def current_color_resource() -> str:
-        """Current CheerLights color as a resource."""
+            return await feed["client"].recent_changes(count)
+        except ThingSpeakError as e:
+            raise ToolError(f"Could not read the CheerLights feed: {e}") from e
+
+    def known_color(name: str) -> str:
+        key = normalize(name)
+        if key not in PALETTE:
+            raise ToolError(f"'{name}' is not a CheerLights color. The colors are: {', '.join(PALETTE)}.")
+        return key
+
+    @mcp.tool(title="Current CheerLights color", annotations=READ_ONLY)
+    async def get_current_cheerlights_color() -> ColorChange:
+        """The color every CheerLights light shows right now: its name, HEX value, and when it was set."""
+        changes = await recent(1)
+        if not changes:
+            raise ToolError("The CheerLights feed returned no color.")
+        return changes[0]
+
+    @mcp.tool(title="CheerLights color history", annotations=READ_ONLY)
+    async def get_cheerlights_history(
+        count: Annotated[int, Field(ge=1, le=100, description="How many recent changes to return")] = 10,
+    ) -> ColorHistory:
+        """Recent CheerLights color changes, newest first."""
+        changes = await recent(count)
+        return ColorHistory(changes=changes, count=len(changes))
+
+    @mcp.tool(title="CheerLights color statistics", annotations=READ_ONLY)
+    async def analyze_color_statistics(
+        sample_size: Annotated[
+            int, Field(ge=10, le=MAX_RESULTS, description="How many recent changes to analyze")
+        ] = 500,
+    ) -> ColorStatistics:
+        """How often each color was picked across recent changes, with the most and least popular."""
+        changes = await recent(sample_size)
+        counts = Counter(change.color for change in changes).most_common()
+        return ColorStatistics(
+            sample_size=len(changes),
+            period_start=changes[-1].set_at if changes else None,
+            period_end=changes[0].set_at if changes else None,
+            counts=dict(counts),
+            most_popular=counts[0][0] if counts else None,
+            least_popular=counts[-1][0] if counts else None,
+            unique_colors=len(counts),
+        )
+
+    @mcp.tool(title="Search CheerLights history", annotations=READ_ONLY)
+    async def search_colors(
+        color: Annotated[str, Field(description="A CheerLights color name, for example purple")],
+        limit: Annotated[int, Field(ge=1, le=100, description="Most matches to return")] = 20,
+        within: Annotated[
+            int, Field(ge=1, le=MAX_RESULTS, description="How many recent changes to search")
+        ] = 1000,
+    ) -> ColorSearchResult:
+        """When a color was picked recently, newest first."""
+        key = known_color(color)
+        changes = await recent(within)
+        matches = [change for change in changes if change.color == key][:limit]
+        return ColorSearchResult(color=key, searched=len(changes), matches=matches, match_count=len(matches))
+
+    @mcp.tool(title="CheerLights color HEX and RGB", annotations=ToolAnnotations(read_only_hint=True))
+    async def get_hex_color_code(
+        color_name: Annotated[str, Field(description="A CheerLights color name, for example oldlace")],
+    ) -> PaletteColor:
+        """The HEX and RGB values of a CheerLights color."""
+        entry = palette_color(known_color(color_name))
+        assert entry is not None
+        return entry
+
+    @mcp.resource(
+        "cheerlights://current",
+        title="Current CheerLights color",
+        description="The current color as JSON",
+        mime_type="application/json",
+    )
+    async def current_resource() -> str:
         try:
-            async with ThingSpeakClient() as client:
-                current = await client.get_current_color()
-                if current:
-                    return f"Current CheerLights color: {current.color} (updated: {current.timestamp})"
-                return "Current CheerLights color: unknown"
-        except Exception as e:
-            return f"Error fetching current color: {e}"
-    
-    @mcp.resource("cheerlights://history/{count}")
+            change = await feed["client"].current()
+        except ThingSpeakError as e:
+            raise ResourceError(f"Could not read the CheerLights feed: {e}") from e
+        return change.model_dump_json()
+
+    @mcp.resource(
+        "cheerlights://history/{count}",
+        title="CheerLights color history",
+        description="The last 1 to 100 color changes as JSON, newest first",
+        mime_type="application/json",
+    )
     async def history_resource(count: str) -> str:
-        """CheerLights color history as a resource."""
+        if not count.isdigit() or not 1 <= int(count) <= 100:
+            raise ResourceError("count must be a number from 1 to 100")
         try:
-            count_int = min(max(int(count), 1), 50)  # Limit for resource
-            async with ThingSpeakClient() as client:
-                colors = await client.get_color_history(count=count_int)
-                
-                if not colors:
-                    return "No color history available"
-                
-                lines = [f"CheerLights Color History (last {len(colors)} changes):"]
-                for i, color_data in enumerate(colors, 1):
-                    lines.append(f"{i}. {color_data.color} at {color_data.timestamp}")
-                
-                return "\n".join(lines)
-        except Exception as e:
-            return f"Error fetching color history: {e}"
-    
-    @mcp.resource("cheerlights://colors/supported")
-    async def supported_colors_resource() -> str:
-        """List of supported CheerLights colors."""
-        from .utils.color_mapping import COLOR_HEX_MAP
-        
-        lines = ["Supported CheerLights Colors:"]
-        for color_name, hex_code in sorted(COLOR_HEX_MAP.items()):
-            lines.append(f"- {color_name}: {hex_code}")
-        
-        return "\n".join(lines)
-    
-    # Register prompts
-    @mcp.prompt()
-    async def analyze_cheerlights_trends(period: str = "recent", focus: str = "general") -> str:
-        """Generate a prompt for analyzing CheerLights color trends.
-        
-        Args:
-            period: Time period to analyze (recent, daily, weekly)
-            focus: Analysis focus (general, popularity, transitions, patterns)
-        """
-        base_prompt = "Analyze the CheerLights color data and provide insights about "
-        
-        if focus == "popularity":
-            analysis_focus = "which colors are most and least popular, including usage statistics"
-        elif focus == "transitions":
-            analysis_focus = "color transition patterns and frequency of changes"
-        elif focus == "patterns":
-            analysis_focus = "temporal patterns, such as time-of-day or seasonal trends"
-        else:
-            analysis_focus = "overall trends, popular colors, and interesting patterns"
-        
-        period_context = ""
-        if period == "daily":
-            period_context = " Focus on the last 24 hours of data."
-        elif period == "weekly":
-            period_context = " Focus on the last week of data."
-        else:
-            period_context = " Focus on recent data."
-        
-        return f"{base_prompt}{analysis_focus}.{period_context} Use the CheerLights tools to gather current data and provide a comprehensive analysis."
-    
-    @mcp.prompt()
-    async def cheerlights_color_report(color: str = "red") -> str:
-        """Generate a prompt for creating a detailed report about a specific color.
-        
-        Args:
-            color: The color to analyze
-        """
-        return f"""Create a detailed report about the color '{color}' in the CheerLights network. Include:
+            changes = await feed["client"].recent_changes(int(count))
+        except ThingSpeakError as e:
+            raise ResourceError(f"Could not read the CheerLights feed: {e}") from e
+        return ColorHistory(changes=changes, count=len(changes)).model_dump_json()
 
-1. Current status: Is {color} the current color?
-2. Historical usage: How often has {color} been used recently?
-3. Technical details: Hex code and RGB values for {color}
-4. Context: When was {color} last used and for how long?
-5. Comparison: How does {color}'s usage compare to other colors?
+    @mcp.resource(
+        "cheerlights://colors",
+        title="CheerLights colors",
+        description="The eleven CheerLights colors with HEX and RGB values, as JSON",
+        mime_type="application/json",
+    )
+    def colors_resource() -> str:
+        return json.dumps([entry.model_dump() for entry in palette()])
 
-Use the CheerLights tools to gather this data and provide accurate, up-to-date information."""
-    
-    logger.info(f"CheerLights MCP server '{name}' created and configured")
+    @mcp.prompt(title="Analyze CheerLights trends")
+    def analyze_cheerlights_trends(
+        focus: Literal["popularity", "streaks", "time of day"] = "popularity",
+    ) -> str:
+        """Ask for an analysis of recent CheerLights color picks."""
+        return (
+            f"Analyze recent CheerLights color picks, focusing on {focus}. Use the CheerLights tools "
+            "to get the data (statistics over the last 1000 changes is a good start), cite the numbers "
+            "you use, and say which period they cover."
+        )
+
+    @mcp.prompt(title="CheerLights color report")
+    def cheerlights_color_report(color: str = "red") -> str:
+        """Ask for a report on one CheerLights color."""
+        return (
+            f"Write a short report on the CheerLights color '{color}': whether it is the current color, "
+            "its HEX and RGB values, how often it was picked in the last 1000 changes compared with the "
+            "other colors, and when it was last picked. Use the CheerLights tools for every fact."
+        )
+
     return mcp
 
 
 def main() -> None:
-    """Main entry point for the CheerLights MCP server."""
-    import sys
-    
-    # Create server
+    """Run the server. Defaults to stdio, the transport desktop AI apps use."""
+    parser = argparse.ArgumentParser(prog="cheerlights-mcp", description="CheerLights MCP server")
+    parser.add_argument("transport", nargs="?", default="stdio", choices=["stdio", "streamable-http", "sse"])
+    parser.add_argument("--host", default="127.0.0.1", help="host for streamable-http or sse")
+    parser.add_argument("--port", type=int, default=8000, help="port for streamable-http or sse")
+    args = parser.parse_args()
+
+    # stdout carries the MCP protocol over stdio, so logs go to stderr.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     server = create_server()
-    
-    # Handle command line arguments
-    transport = "stdio"
-    if len(sys.argv) > 1:
-        transport = sys.argv[1]
-    
-    logger.info(f"Starting CheerLights MCP server with {transport} transport")
-    
-    try:
-        server.run(transport=transport)
-    except KeyboardInterrupt:
-        logger.info("Server stopped by user")
-    except Exception as e:
-        logger.error(f"Server error: {e}")
-        sys.exit(1)
+    if args.transport == "stdio":
+        server.run()
+    else:
+        server.run(transport=args.transport, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

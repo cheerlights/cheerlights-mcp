@@ -1,277 +1,104 @@
-# CheerLights MCP Server
+# CheerLights MCP server
 
-[![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![MCP Compatible](https://img.shields.io/badge/MCP-2.0-green.svg)](https://modelcontextprotocol.io)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+An MCP server that lets Claude and other AI assistants read the live CheerLights color, its history, and statistics.
 
-A modern Model Context Protocol (MCP) server that provides comprehensive access to the CheerLights API. CheerLights is a global IoT project that synchronizes colors across thousands of connected lights worldwide, creating a real-time shared experience.
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![MCP Python SDK 2.x](https://img.shields.io/badge/MCP%20SDK-2.x-green) ![License: MIT](https://img.shields.io/badge/license-MIT-yellow)
 
-## 🌈 Features
+[CheerLights](https://cheerlights.com) is a global network of lights that all show the same color, set by anyone on the [CheerLights Discord](https://cheerlights.com/discord).
+This server reads the public CheerLights feed (ThingSpeak channel 1417) and gives an assistant five read-only tools: the current color, recent history, statistics, search, and HEX and RGB values.
+It is built on the MCP Python SDK 2.x and needs no API key.
 
-### Tools (Actions)
-- **Current Color**: Get the most recent CheerLights color from the global network
-- **Color History**: Retrieve recent color changes with configurable count (1-100)
-- **Color Statistics**: Analyze color usage patterns and popularity over time
-- **Color Search**: Find specific colors in the historical data
-- **Hex Color Codes**: Get hex codes and RGB values for CheerLights colors
+## Quick start
 
-### Resources (Context)
-- **Current Color Resource**: Real-time current color as a readable resource
-- **History Resource**: Formatted color history for context injection
-- **Supported Colors**: Complete list of valid CheerLights colors with hex codes
+You need [uv](https://docs.astral.sh/uv/), which installs Python 3.10 or later for you.
 
-### Prompts (Templates)
-- **Trend Analysis**: Generate prompts for analyzing CheerLights color trends
-- **Color Reports**: Create detailed reports about specific colors
-
-## 🚀 Quick Start
-
-### Using uv (Recommended)
+Add the server to Claude Code:
 
 ```bash
-# Clone the repository
-git clone https://github.com/cheerlights/cheerlights-mcp.git
-cd cheerlights-mcp
-
-# Install with uv
-uv sync
-
-# Run the server
-uv run cheerlights-mcp
+claude mcp add cheerlights -- uvx --from git+https://github.com/cheerlights/cheerlights-mcp cheerlights-mcp
 ```
 
-### Using pip
-
-```bash
-# Clone and install
-git clone https://github.com/cheerlights/cheerlights-mcp.git
-cd cheerlights-mcp
-pip install -e .
-
-# Run the server
-python -m cheerlights_mcp.server
-```
-
-## 📦 Installation
-
-### For Development
-
-```bash
-# Install with development dependencies
-uv sync --dev
-
-# Install pre-commit hooks
-uv run pre-commit install
-```
-
-### From PyPI (when published)
-
-```bash
-pip install cheerlights-mcp
-```
-
-## 🔧 Usage
-
-### With Claude Desktop
-
-Add to your Claude Desktop configuration:
-
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`  
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+Or add it to Claude Desktop's `claude_desktop_config.json` and restart the app:
 
 ```json
 {
-    "mcpServers": {
-        "cheerlights": {
-            "command": "uv",
-            "args": ["run", "cheerlights-mcp"],
-            "cwd": "/path/to/cheerlights-mcp"
-        }
+  "mcpServers": {
+    "cheerlights": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/cheerlights/cheerlights-mcp", "cheerlights-mcp"]
     }
+  }
 }
 ```
 
-### Direct Execution
+Then ask: "What's the current CheerLights color?"
+The assistant calls `get_current_cheerlights_color` and answers with the live color.
 
-```bash
-# Standard I/O (default)
-python -m cheerlights_mcp.server
+## Example
 
-# With specific transport
-python -m cheerlights_mcp.server stdio
-python -m cheerlights_mcp.server sse
-python -m cheerlights_mcp.server streamable-http
-```
+These results come from a live run of version 3.0.0 over stdio on 2026-10-28 (`examples/client_example.py`).
 
-### Programmatic Usage
+`get_current_cheerlights_color` returns the color, its HEX value, and when it was set:
 
-```python
-from cheerlights_mcp import create_server
-
-# Create and run server
-server = create_server("My CheerLights Server")
-server.run()
-```
-
-## 🛠️ API Reference
-
-### Tools
-
-#### `get_current_cheerlights_color()`
-Returns structured `ColorData` with:
-- `color`: Current color name
-- `timestamp`: When it was set
-- `entry_id`: Unique identifier
-- `created_at`: Parsed datetime (optional)
-
-#### `get_cheerlights_history(count: int = 5)`
-Returns `ColorHistory` with recent changes (1-100 entries).
-
-#### `analyze_color_statistics(sample_size: int = 50)`
-Returns `ColorStatistics` with:
-- Color frequency counts
-- Most/least popular colors
-- Analysis period information
-- Unique color count
-
-#### `search_colors(color: str, limit: int = 20)`
-Returns `ColorSearchResult` with matching entries.
-
-#### `get_hex_color_code(color_name: str)`
-Returns `HexColor` with hex code and RGB values.
-
-### Resources
-
-- `cheerlights://current` - Current color status
-- `cheerlights://history/{count}` - Recent color history
-- `cheerlights://colors/supported` - All supported colors
-
-### Example Queries for Claude
-
-- "What's the current CheerLights color and when was it last changed?"
-- "Show me the last 20 CheerLights color changes"
-- "Analyze the color usage statistics for the last 100 changes"
-- "Search for all recent times the color was 'blue'"
-- "What's the hex code for the CheerLights 'warmwhite' color?"
-- "Create a report on CheerLights color trends"
-
-## 🧪 Testing
-
-```bash
-# Run all tests
-uv run pytest
-
-# Run with coverage
-uv run pytest --cov=cheerlights_mcp
-
-# Run specific test files
-uv run pytest tests/test_tools.py -v
-```
-
-## 🏗️ Architecture
-
-```
-cheerlights-mcp/
-├── src/cheerlights_mcp/
-│   ├── api/              # ThingSpeak API client
-│   ├── models/           # Pydantic data models
-│   ├── tools/            # MCP tool implementations
-│   ├── utils/            # Utilities (color mapping, statistics)
-│   └── server.py         # Main FastMCP server
-├── tests/                # Comprehensive test suite
-└── examples/             # Usage examples
-```
-
-### Key Components
-
-- **ThingSpeakClient**: Async HTTP client for CheerLights API
-- **Pydantic Models**: Type-safe data validation and serialization
-- **Structured Output**: Full support for MCP structured responses
-- **Comprehensive Error Handling**: Graceful degradation and logging
-- **Statistics Engine**: Color usage analysis and trend calculation
-
-## 🎨 Supported Colors
-
-CheerLights supports these standard colors:
-
-- **Primary**: red, green, blue
-- **Secondary**: cyan, magenta, yellow
-- **Extended**: orange, pink, purple, white, warmwhite, oldlace
-- **Utility**: black
-
-Each color includes hex codes and RGB values for precise representation.
-
-## 📊 Example Data
-
-### Current Color Response
 ```json
 {
-  "color": "red",
-  "timestamp": "2024-01-15 14:30:22 UTC",
-  "entry_id": "12345",
-  "created_at": "2024-01-15T14:30:22Z"
+  "color": "purple",
+  "hex": "#800080",
+  "set_at": "2026-10-28T15:46:23Z",
+  "entry_id": 1067049
 }
 ```
 
-### Statistics Response
+`analyze_color_statistics` with `sample_size` 1000 covered 2026-09-13 to 2026-10-28 (excerpt):
+
 ```json
 {
-  "color_counts": {"red": 15, "blue": 12, "green": 8},
-  "most_popular": "red",
-  "least_popular": "green", 
-  "total_changes": 35,
-  "unique_colors": 3,
-  "analysis_period": "2 hours"
+  "sample_size": 1000,
+  "counts": { "orange": 111, "blue": 109, "red": 105, "...": "...", "white": 15 },
+  "most_popular": "orange",
+  "least_popular": "white",
+  "unique_colors": 11
 }
 ```
 
-### Development Setup
+## Tools
+
+- `get_current_cheerlights_color`: the current color, its HEX value, and when it was set.
+- `get_cheerlights_history`: the last 1 to 100 color changes, newest first.
+- `analyze_color_statistics`: how often each color was picked across the last 10 to 8000 changes.
+- `search_colors`: when a color was picked recently, newest first.
+- `get_hex_color_code`: the HEX and RGB values of any of the eleven CheerLights colors.
+- Resources `cheerlights://current`, `cheerlights://history/{count}`, and `cheerlights://colors`, as JSON.
+- Prompts `analyze_cheerlights_trends` and `cheerlights_color_report`.
+
+Every tool is marked read-only, returns structured output with a schema, and answers an unknown color with an error that lists the valid ones.
+
+## Limits
+
+- It reads the color; it cannot set it. People set the color on the CheerLights Discord with `/cheerlights`.
+- History reaches back at most 8000 changes, the most ThingSpeak returns in one request.
+- If ThingSpeak cannot be reached, the tools return an error saying so.
+- It is not on PyPI yet; install it from GitHub as shown above.
+
+## Documentation
+
+- [Tools, resources, and prompts](https://github.com/cheerlights/cheerlights-mcp/blob/main/docs/tools.md): every parameter, its range, and the fields each tool returns.
+- [The CheerLights API](https://cheerlights.com/learn/): ThingSpeak, Adafruit IO, and MQTT feeds, for building without MCP.
+
+## Development
 
 ```bash
-# Clone and setup
-git clone https://github.com/cheerlights/cheerlights-mcp.git
+git clone https://github.com/cheerlights/cheerlights-mcp
 cd cheerlights-mcp
-uv sync --dev
-
-# Install pre-commit hooks
-uv run pre-commit install
-
-# Run tests
-uv run pytest -v
+uv sync
+uv run pytest
 ```
 
-## 📝 Changelog
+The 11 tests drive the server through an in-memory MCP client against a fake ThingSpeak.
+`uv run python examples/client_example.py` starts the server over stdio and calls every tool against the live feed.
+`uv run ruff check .` and `uv run mypy src` check style and types.
+To serve over HTTP instead of stdio, run `uv run cheerlights-mcp streamable-http --port 8000`.
 
-### Version 2.0.0
+## License
 
-- **Complete rewrite** using modern MCP Python SDK
-- **Structured Output** support for all tools
-- **Enhanced API client** with proper error handling
-- **Comprehensive test suite** with >90% coverage
-- **Type safety** with Pydantic models throughout
-- **New tools**: statistics, search, hex color codes
-- **Resources and prompts** for richer integration
-- **Modern packaging** with uv and pyproject.toml
-
-### Version 1.0.0
-
-- Initial FastMCP implementation
-- Basic current color and history tools
-- Simple ThingSpeak integration
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🔗 Links
-
-- **CheerLights Project**: [cheerlights.com](https://cheerlights.com)
-- **MCP Documentation**: [modelcontextprotocol.io](https://modelcontextprotocol.io)
-- **ThingSpeak API**: [thingspeak.com](https://thingspeak.com)
-- **Original Tutorial**: [Creating MCP Servers](https://nothans.com/learn-how-to-create-your-own-mcp-server-for-claude-desktop-and-windsurf)
-
-## 🎄 About CheerLights
-
-CheerLights is a global Internet of Things project that synchronizes colored lights all around the world to create a synchronized light display. The project was created by Hans Scharler and has connected thousands of lights across the globe since 2011. When someone changes the color on the [CheerLights Discord Server](https://cheerlights/discord), all participating lights change to that color in near real-time.
-
-This MCP server provides AI assistants with rich access to CheerLights data, enabling analysis of global lighting trends, color popularity, and temporal patterns in this unique IoT dataset.
+MIT. See [LICENSE](https://github.com/cheerlights/cheerlights-mcp/blob/main/LICENSE).
