@@ -2,7 +2,7 @@
 
 An MCP server that lets Claude and other AI assistants read the live CheerLights color, its history, and statistics.
 
-![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![MCP Python SDK 2.x](https://img.shields.io/badge/MCP%20SDK-2.x-green) ![License: MIT](https://img.shields.io/badge/license-MIT-yellow)
+[![PyPI](https://img.shields.io/pypi/v/cheerlights-mcp)](https://pypi.org/project/cheerlights-mcp/) [![Python](https://img.shields.io/pypi/pyversions/cheerlights-mcp)](https://pypi.org/project/cheerlights-mcp/) [![CI](https://github.com/cheerlights/cheerlights-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/cheerlights/cheerlights-mcp/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](https://github.com/cheerlights/cheerlights-mcp/blob/main/LICENSE)
 
 [CheerLights](https://cheerlights.com) is a global network of lights that all show the same color, set by anyone on the [CheerLights Discord](https://cheerlights.com/discord).
 This server reads the public CheerLights feed (ThingSpeak channel 1417) and gives an assistant five read-only tools: the current color, recent history, statistics, search, and HEX and RGB values.
@@ -11,11 +11,12 @@ It is built on the MCP Python SDK 2.x and needs no API key.
 ## Quick start
 
 You need [uv](https://docs.astral.sh/uv/), which installs Python 3.10 or later for you.
+`uvx` runs the server straight from [PyPI](https://pypi.org/project/cheerlights-mcp/), with nothing else to install.
 
 Add the server to Claude Code:
 
 ```bash
-claude mcp add cheerlights -- uvx --from git+https://github.com/cheerlights/cheerlights-mcp cheerlights-mcp
+claude mcp add cheerlights -- uvx cheerlights-mcp
 ```
 
 Or add it to Claude Desktop's `claude_desktop_config.json` and restart the app:
@@ -25,7 +26,7 @@ Or add it to Claude Desktop's `claude_desktop_config.json` and restart the app:
   "mcpServers": {
     "cheerlights": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/cheerlights/cheerlights-mcp", "cheerlights-mcp"]
+      "args": ["cheerlights-mcp"]
     }
   }
 }
@@ -78,7 +79,6 @@ Every tool is marked read-only, returns structured output with a schema, and ans
 - It reads the color; it cannot set it. People set the color on the CheerLights Discord with `/cheerlights`.
 - History reaches back at most 8000 changes, the most ThingSpeak returns in one request.
 - If ThingSpeak cannot be reached, the tools return an error saying so.
-- It is not on PyPI yet; install it from GitHub as shown above.
 
 ## Documentation
 
